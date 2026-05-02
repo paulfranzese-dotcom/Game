@@ -9,7 +9,8 @@ import { ResultsScreen } from './components/ResultsScreen';
 import { GameMode, PlayerData, SessionResult } from './types';
 import { createAllFacts, explanation, pickWeightedFact } from './utils/questionEngine';
 import { applyAnswer, tableMastery } from './utils/progress';
-import { loadPlayer, savePlayer } from './utils/storage';
+import { getActivePlayerName, loadPlayer, savePlayer, setActivePlayerName } from './utils/storage';
+import { playSound } from './utils/sound';
 
 const initialPlayer = (name: string): PlayerData => ({ playerName: name, xp: 0, level: 1, coins: 0, badges: [], currentStreakDays: 0, bestSpeedRound: 0, totalQuestions: 0, totalCorrect: 0, masteredFacts: 0, facts: createAllFacts(), mistakeQueue: [], unlockedTheme: 'classic', reducedMotion: false, lastPlayDate: null });
 
@@ -26,6 +27,12 @@ function App() {
   useEffect(() => { if (player) savePlayer(player); }, [player]);
   useEffect(() => { if (mode === 'speed' && timer > 0) { const id = setTimeout(()=>setTimer((t)=>t-1),1000); return ()=>clearTimeout(id);} if (mode==='speed'&&timer===0) finishSession(); }, [timer, mode]);
 
+  const spawnPopup = (text: string, kind: string) => {
+    const id = Date.now() + Math.random();
+    setPopups((p) => [...p, { id, text, kind }]);
+    setTimeout(() => setPopups((p) => p.filter((x) => x.id !== id)), 1600);
+  };
+
   const activeFact = useMemo(() => {
     if (!player || !mode) return null;
     const facts = Object.values(player.facts);
@@ -39,19 +46,35 @@ function App() {
     return pickWeightedFact(facts);
   }, [player, mode, tableChoice]);
 
-  const addBadge = (p: PlayerData, badge: string) => p.badges.includes(badge) ? p : { ...p, badges: [...p.badges, badge] };
+  const addBadge = (p: PlayerData, badge: string) => {
+    if (p.badges.includes(badge)) return p;
+    playSound('badge', muted); spawnPopup('Badge Unlocked!', 'badge');
+    return { ...p, badges: [...p.badges, badge] };
+  };
+
+  const switchPlayer = () => {
+    const confirmed = window.confirm('Switch player? Current progress is saved.');
+    if (!confirmed) return;
+    setMode(null); setResult(null); setFeedback(''); setActivePlayerName(null); setPlayer(null);
+  };
 
   const onAnswer = (val: number) => {
     if (!player || !activeFact || Number.isNaN(val)) return;
     const correct = val === activeFact.a * activeFact.b;
     const nextStreak = correct ? streak + 1 : 0;
     setStreak(nextStreak);
+    const prevCoins = player.coins;
     const nextPlayer = applyAnswer(player, activeFact.key, correct, nextStreak);
+    playSound(correct ? 'correct' : 'wrong', muted);
+    setEffectClass(correct ? 'celebrate' : 'shake');
+    setTimeout(() => setEffectClass(''), 500);
+    if (nextStreak > 0 && nextStreak % 5 === 0) spawnPopup(`Streak: ${nextStreak}! 🔥`, 'streak');
+    if (nextPlayer.xp > player.xp) spawnPopup(`+${nextPlayer.xp - player.xp} XP`, 'xp');
+    if (nextPlayer.coins > prevCoins) { spawnPopup(`+${nextPlayer.coins - prevCoins} Coins`, 'coin'); playSound('coin', muted); }
+
     let withBadges = nextPlayer;
     if (nextPlayer.totalCorrect >= 10) withBadges = addBadge(withBadges, 'First 10 Correct');
-    if (withBadges.currentStreakDays >= 3) withBadges = addBadge(withBadges, '3-Day Streak');
     if (mode === 'boss' && correct) withBadges = addBadge(withBadges, 'Boss Battle Win');
-    if (mode === 'speed' && timer === 0 && session.total > 0 && session.correct === session.total) withBadges = addBadge(withBadges, 'Perfect Speed Round');
     setPlayer(withBadges);
     setSession((s) => ({ total: s.total + 1, correct: s.correct + (correct ? 1 : 0), xp: withBadges.xp - player.xp, coins: withBadges.coins - player.coins }));
     setFeedback(correct ? 'Great job! 🌟' : `Not quite. ${activeFact.a} × ${activeFact.b} = ${activeFact.a * activeFact.b}. ${explanation(activeFact.a, activeFact.b)}`);
@@ -60,21 +83,23 @@ function App() {
 
   const finishSession = () => {
     if (!mode) return;
+    playSound('session', muted); spawnPopup('Session Complete! 🎉', 'session');
     setResult({ mode, total: session.total, correct: session.correct, xpEarned: session.xp, coinsEarned: session.coins });
     setMode(null); setSession({ total: 0, correct: 0, xp: 0, coins: 0 }); setTimer(60); setFeedback('');
   };
 
-  if (!player) return <PlayerSetup onStart={(name) => setPlayer(initialPlayer(name))} />;
+  if (!player) return <PlayerSetup onStart={(name) => setPlayer(loadPlayer(name) ?? initialPlayer(name))} />;
   if (result) return <ResultsScreen result={result} onClose={() => setResult(null)} />;
 
   return (
-    <main className="app">
-      <header className="card"><h1>Multiplication Quest</h1><button onClick={()=>setPlayer({...player, reducedMotion: !player.reducedMotion})}>Reduced motion: {player.reducedMotion ? 'On' : 'Off'}</button></header>
+    <main className={`app ${effectClass}`}>
+      <div className="popups">{popups.map((p) => <div key={p.id} className={`popup ${p.kind}`}>{p.text}</div>)}</div>
+      <header className="card"><h1>Multiplication Quest</h1><div className="row"><button onClick={()=>setPlayer({...player, reducedMotion: !player.reducedMotion})}>Reduced motion: {player.reducedMotion ? 'On' : 'Off'}</button><button onClick={()=>setMuted((m)=>!m)}>{muted ? 'Unmute 🔊' : 'Mute 🔇'}</button><button onClick={switchPlayer}>Switch Player</button></div></header>
       <Dashboard player={player} />
       <BadgeShelf badges={player.badges} />
       <ProgressMap player={player} />
       {!mode && <><label>Practice table: <select value={tableChoice} onChange={(e)=>setTableChoice(Number(e.target.value))}>{Array.from({length:13},(_,n)=><option key={n}>{n}</option>)}</select></label><GameModeSelector onPick={setMode} /></>}
-      {mode && activeFact && <><p>{mode==='speed' ? `Time: ${timer}s` : `Question ${session.total+1}/10`}</p><QuestionCard a={activeFact.a} b={activeFact.b} onAnswer={onAnswer} feedback={feedback} /><button onClick={finishSession}>End Session</button></>}
+      {mode && activeFact && <><div className="row"><p>{mode==='speed' ? `Time: ${timer}s` : `Question ${session.total+1}/10`}</p><button onClick={switchPlayer}>Start Over</button></div><QuestionCard a={activeFact.a} b={activeFact.b} onAnswer={onAnswer} feedback={feedback} /><button onClick={finishSession}>End Session</button></>}
     </main>
   );
 }
