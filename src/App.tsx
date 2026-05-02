@@ -15,19 +15,13 @@ import { playSound } from './utils/sound';
 const initialPlayer = (name: string): PlayerData => ({ playerName: name, xp: 0, level: 1, coins: 0, badges: [], currentStreakDays: 0, bestSpeedRound: 0, totalQuestions: 0, totalCorrect: 0, masteredFacts: 0, facts: createAllFacts(), mistakeQueue: [], unlockedTheme: 'classic', reducedMotion: false, lastPlayDate: null });
 
 function App() {
-  const [player, setPlayer] = useState<PlayerData | null>(() => {
-    const active = getActivePlayerName();
-    return active ? loadPlayer(active) : null;
-  });
+  const [player, setPlayer] = useState<PlayerData | null>(loadPlayer());
   const [mode, setMode] = useState<GameMode | null>(null);
   const [tableChoice, setTableChoice] = useState(2);
   const [feedback, setFeedback] = useState('');
   const [streak, setStreak] = useState(0);
   const [timer, setTimer] = useState(60);
   const [result, setResult] = useState<SessionResult | null>(null);
-  const [muted, setMuted] = useState(false);
-  const [effectClass, setEffectClass] = useState('');
-  const [popups, setPopups] = useState<{ id: number; text: string; kind: string }[]>([]);
   const [session, setSession] = useState({ total: 0, correct: 0, xp: 0, coins: 0 });
 
   useEffect(() => { if (player) savePlayer(player); }, [player]);
